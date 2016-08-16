@@ -1,76 +1,47 @@
-#include <iostream>
-#include <map>
-#include <vector>
-#include <string>
-#include <stdexcept>
-#include <fstream>
-#include <utility>
+#include "bencode.h"
 
-class BencodeObj {
-public:
-  virtual ~BencodeObj() {}
-  virtual void print(std::ostream &stream) const { }
-};
+BencodeObj::~BencodeObj() {}
+void BencodeObj::print(std::ostream &stream) const {}
 
-class BencodeInt : public BencodeObj {
-private:
-  int value;
-public:
-  BencodeInt(int value) : value(value) { }
-  virtual void print(std::ostream &stream) const {
-    stream << "i" << value << "e";
-  }
-};
+BencodeInt::BencodeInt(int value) : value(value) { }
+void BencodeInt::print(std::ostream &stream) const {
+  stream << "i" << value << "e";
+}
 
-class BencodeList : public BencodeObj {
-private:
-  std::vector<BencodeObj *> list;
-public:
-  BencodeList(std::vector<BencodeObj *> list) : list(list) {}
-  virtual void print(std::ostream &stream) const {
-    stream << "l";
-    for (auto it = list.cbegin(); it != list.cend(); it++) {
-      (*it)->print(stream);
-    }
-    stream << "e";
+BencodeList::BencodeList(std::vector<BencodeObj *> list) : list(list) {}
+void BencodeList::print(std::ostream &stream) const {
+  stream << "l";
+  for (auto it = list.cbegin(); it != list.cend(); it++) {
+    (*it)->print(stream);
   }
-  virtual ~BencodeList() {
-    for (auto it = list.cbegin(); it != list.cend(); it++) {
-      delete *it;
-    }
+  stream << "e";
+}
+BencodeList::~BencodeList() {
+  for (auto it = list.begin(); it != list.end(); it++) {
+    delete *it;
   }
-};
+}
 
-class BencodeDict : public BencodeObj {
-private:
-  std::map<std::string, BencodeObj *> dict;
-public:
-  BencodeDict(std::map<std::string, BencodeObj *> dict) : dict(dict) {}
-  virtual void print(std::ostream &stream) const {
-    stream << "d";
-    for (auto it = dict.cbegin(); it != dict.cend(); it++) {
-      stream << it->first.size() << ":" << it->first;
-      it->second->print(stream);
-    }
-    stream << "e";
+BencodeDict::BencodeDict(std::map<std::string, BencodeObj *> dict) : dict(dict) {}
+void BencodeDict::print(std::ostream &stream) const {
+  stream << "d";
+  for (auto it = dict.cbegin(); it != dict.cend(); it++) {
+    stream << it->first.size() << ":" << it->first;
+    it->second->print(stream);
   }
-  virtual ~BencodeDict() {
-    for (auto it = dict.cbegin(); it != dict.cend(); it++) {
-      delete it->second;
-    }
+  stream << "e";
+}
+BencodeDict::~BencodeDict() {
+  for (auto it = dict.begin(); it != dict.end(); it++) {
+    delete it->second;
   }
-};
+}
 
-class BencodeString : public BencodeObj {
-private:
-  std::string value;
-public:
-  BencodeString(std::string value) : value(value) {}
-  std::string get_value() { return value; }
-  virtual void print(std::ostream &stream) const {
-    stream << value.size() << ":" << value;
-  }
-};
+BencodeString::BencodeString(std::string value) : value(value) {}
+std::string BencodeString::get_value() { return value; }
+void BencodeString::print(std::ostream &stream) const {
+  stream << value.size() << ":" << value;
+}
 
 BencodeObj *BencodeDecode(std::vector<char>::const_iterator &it,
     std::vector<char>::const_iterator &it_end) {
@@ -117,19 +88,4 @@ BencodeObj *BencodeDecode(std::vector<char>::const_iterator &it,
     throw std::logic_error("Unrecognized bencode type");
   }
   return NULL;
-}
-
-int main() {
-  std::ifstream file("hello.txt", std::ios::binary | std::ios::ate);
-  std::streamsize size = file.tellg();
-  file.seekg(0, std::ios::beg);
-
-  std::vector<char> buffer(size);
-  if (file.read(buffer.data(), size))
-  {
-    auto start = buffer.cbegin();
-    auto end = buffer.cend();
-    BencodeDecode(start, end)->print(std::cout);
-  }
-  return 0;
 }
