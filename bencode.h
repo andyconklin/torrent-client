@@ -13,6 +13,7 @@ class BencodeObj {
 public:
   virtual ~BencodeObj();
   virtual void print(std::ostream &stream) const;
+  virtual BencodeObj *get(int index);
 };
 
 class BencodeInt : public BencodeObj {
@@ -30,6 +31,7 @@ public:
   BencodeList(std::vector<BencodeObj *> list);
   virtual void print(std::ostream &stream) const;
   virtual ~BencodeList();
+  virtual BencodeObj *get(int index);
 };
 
 class BencodeDict : public BencodeObj {

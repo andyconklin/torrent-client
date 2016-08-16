@@ -2,6 +2,10 @@
 
 BencodeObj::~BencodeObj() {}
 void BencodeObj::print(std::ostream &stream) const {}
+BencodeObj *BencodeObj::get(int index) {
+  throw std::logic_error("Called get(int) on something other than BencodeList");
+  return NULL;
+}
 
 BencodeInt::BencodeInt(int value) : value(value) { }
 void BencodeInt::print(std::ostream &stream) const {
@@ -20,6 +24,9 @@ BencodeList::~BencodeList() {
   for (auto it = list.begin(); it != list.end(); it++) {
     delete *it;
   }
+}
+BencodeObj *BencodeList::get(int index) {
+  return list.at(index);
 }
 
 BencodeDict::BencodeDict(std::map<std::string, BencodeObj *> dict) : dict(dict) {}
