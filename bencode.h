@@ -20,9 +20,8 @@ public:
 };
 
 class BencodeInt : public BencodeObj {
-private:
-  int value;
 public:
+  int value;
   BencodeInt(int value, std::pair<int, int> bounds);
   virtual void print(std::ostream &stream) const;
 };

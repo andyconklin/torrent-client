@@ -1,5 +1,6 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <iomanip>
 #include <openssl/sha.h>
@@ -10,6 +11,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <sys/select.h>
+#include <unistd.h>
 
 #include "bencode.h"
 
@@ -54,10 +56,13 @@ void NetworkerEntry() {
     if (select(max_fd, &fds, NULL, NULL, &timeout) > 0) {
       if (FD_ISSET(my_socket, &fds)) {
         connected.push_back(accept(my_socket, NULL, NULL));
+        std::cout << "A new peer has connected." << std::endl;
       }
       for (auto it = connected.cbegin(); it != connected.cend(); it++) {
         if (FD_ISSET(*it, &fds)) {
-          /* peer has something to say */
+          char sockbuf[1024];
+          read(*it, sockbuf, 1024);
+          std::cout << "FD=" << *it << " says: " << sockbuf << std::endl;
         }
       }
     }
@@ -65,6 +70,8 @@ void NetworkerEntry() {
 }
 
 int main(int argc, char* argv[]) {
+  std::thread networker(NetworkerEntry);
+
   std::vector<char> metainfo = ReadFile(argv[1]);
   auto curr = metainfo.cbegin();
   BencodeObj *root = BencodeDecode(metainfo.cbegin(), curr, metainfo.cend());
@@ -73,23 +80,26 @@ int main(int argc, char* argv[]) {
   unsigned char hash[SHA_DIGEST_LENGTH];
   SHA1(reinterpret_cast<const unsigned char *>(&metainfo[info->bounds.first]), 1 + info->bounds.second - info->bounds.first, hash);
 
-  CURL *curl = curl_easy_init();
-  if (!curl) throw std::logic_error("curl_easy_init() failed");
-
-  char *escaped = curl_easy_escape(curl, reinterpret_cast<const char *>(hash), 20);
-  std::cout << escaped << std::endl;
-  curl_free(escaped);
-
   unsigned char randbytes[20];
   RAND_bytes(randbytes, sizeof(randbytes));
 
-  escaped = curl_easy_escape(curl, reinterpret_cast<const char *>(randbytes), 20);
-  std::cout << escaped << std::endl;
-  curl_free(escaped);
+  CURL *curl = curl_easy_init();
+  if (!curl) throw std::logic_error("curl_easy_init() failed");
 
+  char *escaped_info_hash = curl_easy_escape(curl, reinterpret_cast<const char *>(hash), 20);
+  char *escaped_random = curl_easy_escape(curl, reinterpret_cast<const char *>(randbytes), 20);
+
+  std::ostringstream url;
+  url << dynamic_cast<BencodeString *>(root->get("announce"))->get_value();
+  url << "?" << "info_hash=" << escaped_info_hash << "&peer_id="
+      << escaped_random << "&port=6881&uploaded=0&downloaded=0";
+
+  std::cout << url.str() << std::endl;
+
+  curl_free(escaped_info_hash);
+  curl_free(escaped_random);
   curl_easy_cleanup(curl);
 
-  std::thread networker(NetworkerEntry);
   networker.join();
 
   return 0;
