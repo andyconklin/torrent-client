@@ -5,17 +5,25 @@ BencodeObj::~BencodeObj() {}
 void BencodeObj::print(std::ostream &stream) const {}
 BencodeObj *BencodeObj::get(int index) {
   throw std::logic_error("Called get(int) on something other than BencodeList");
-  return NULL;
 }
 BencodeObj *BencodeObj::get(std::string key) {
   throw std::logic_error("Called get(str) on something other than BencodeDict");
-  return NULL;
+}
+int BencodeObj::get_int() const {
+  throw std::logic_error("Called get_int on something other than BencodeInt");
+}
+std::string BencodeObj::get_string() const {
+  throw std::logic_error("Called get_string on something other than BencodeString");
+}
+std::vector<BencodeObj *> & BencodeObj::get_list() {
+  throw std::logic_error("Called get_list on something other than BencodeList");
 }
 
 BencodeInt::BencodeInt(int value, std::pair<int, int> bounds) : BencodeObj(bounds), value(value) { }
 void BencodeInt::print(std::ostream &stream) const {
   stream << "i" << value << "e";
 }
+int BencodeInt::get_int() const { return value; }
 
 BencodeList::BencodeList(std::vector<BencodeObj *> list, std::pair<int, int> bounds) : BencodeObj(bounds), list(list) {}
 void BencodeList::print(std::ostream &stream) const {
@@ -32,6 +40,9 @@ BencodeList::~BencodeList() {
 }
 BencodeObj *BencodeList::get(int index) {
   return list.at(index);
+}
+std::vector<BencodeObj *> & BencodeList::get_list() {
+  return list;
 }
 
 BencodeDict::BencodeDict(std::map<std::string, BencodeObj *> dict, std::pair<int, int> bounds) : BencodeObj(bounds), dict(dict) {}
@@ -53,11 +64,14 @@ BencodeObj *BencodeDict::get(std::string key) {
 }
 
 BencodeString::BencodeString(std::string value, std::pair<int, int> bounds) : BencodeObj(bounds), value(value) {}
-std::string BencodeString::get_value() { return value; }
+std::string BencodeString::get_string() const { return value; }
 void BencodeString::print(std::ostream &stream) const {
   stream << value.size() << ":" << value;
 }
 
+/* This should not be called outside of this file...
+   Call BencodeObj *BencodeDecode(std::vector<char> const &buffer) instead. */
+namespace {
 BencodeObj *BencodeDecode(std::vector<char>::const_iterator const it_begin,
     std::vector<char>::const_iterator &it,
     std::vector<char>::const_iterator const it_end) {
@@ -97,7 +111,7 @@ BencodeObj *BencodeDecode(std::vector<char>::const_iterator const it_begin,
   } else if (*it == 'd') {
     std::map<std::string, BencodeObj *> d;
     while (*(++it) != 'e') {
-      std::string k = (dynamic_cast<BencodeString *>(BencodeDecode(it_begin, it, it_end)))->get_value();
+      std::string k = BencodeDecode(it_begin, it, it_end)->get_string();
       d.insert(std::make_pair(k, BencodeDecode(it_begin, ++it, it_end)));
     }
     return new BencodeDict(d, std::make_pair(first_char, std::distance(it_begin, it)));
@@ -105,4 +119,10 @@ BencodeObj *BencodeDecode(std::vector<char>::const_iterator const it_begin,
     throw std::logic_error("Unrecognized bencode type");
   }
   return NULL;
+}
+} /* namespace */
+
+BencodeObj *BencodeDecode(std::vector<char> const &buffer) {
+  auto curr = buffer.cbegin();
+  return BencodeDecode(buffer.cbegin(), curr, buffer.cend());
 }

@@ -14,16 +14,21 @@ public:
   std::pair<int, int> bounds;
   BencodeObj(std::pair<int, int> bounds);
   virtual ~BencodeObj();
-  virtual void print(std::ostream &stream) const;
   virtual BencodeObj *get(int index);
   virtual BencodeObj *get(std::string key);
+  virtual void print(std::ostream &stream) const;
+  virtual int get_int() const;
+  virtual std::string get_string() const;
+  virtual std::vector<BencodeObj *> &get_list();
 };
 
 class BencodeInt : public BencodeObj {
-public:
+private:
   int value;
+public:
   BencodeInt(int value, std::pair<int, int> bounds);
   virtual void print(std::ostream &stream) const;
+  virtual int get_int() const;
 };
 
 class BencodeList : public BencodeObj {
@@ -34,6 +39,7 @@ public:
   virtual void print(std::ostream &stream) const;
   virtual ~BencodeList();
   virtual BencodeObj *get(int index);
+  virtual std::vector<BencodeObj *> &get_list();
 };
 
 class BencodeDict : public BencodeObj {
@@ -51,12 +57,10 @@ private:
   std::string value;
 public:
   BencodeString(std::string value, std::pair<int, int> bounds);
-  std::string get_value();
   virtual void print(std::ostream &stream) const;
+  virtual std::string get_string() const;
 };
 
-BencodeObj *BencodeDecode(std::vector<char>::const_iterator const it_begin,
-    std::vector<char>::const_iterator &it,
-    std::vector<char>::const_iterator const it_end);
+BencodeObj *BencodeDecode(std::vector<char> const &buffer);
 
 #endif
