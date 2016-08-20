@@ -15,6 +15,9 @@
 #include <fcntl.h>
 #include <map>
 #include <ctime>
+#include <cstring>
+#include <arpa/inet.h>
+
 #include <cerrno>
 
 #include "bencode.h"
@@ -34,8 +37,8 @@ std::vector<char> ReadFile(std::string path) {
 }
 
 struct Peer {
-  Peer(int fd) : fd(fd), received_from(std::time(NULL)), am_interested(false),
-      am_choked(true), is_interested(false), is_choked(true) { }
+  Peer(int fd, bool initiated) : fd(fd), received_from(std::time(NULL)), am_interested(false),
+      am_choked(true), is_interested(false), is_choked(true), I_initiated(initiated) { }
   void load_info_hash(unsigned char *x) {
     for (int i = 0; i < 20; i++) info_hash[i] = x[i];
   }
@@ -58,7 +61,31 @@ struct Peer {
 };
 
 struct Torrent {
+  BencodeObj *metainfo;
+  BencodeObj *response;
+  int peer_index;
+  Torrent(BencodeObj* metainfo, BencodeObj* response) : metainfo(metainfo), response(response), peer_index(0) { }
+  struct sockaddr_in yield_peer() {
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    for (int i = 0; i < 8; i++) addr.sin_zero[i] = 0;
 
+    std::string peers = response->get("peers")->get_string();
+    std::cout << "HOST ";
+    for (int i = 0; i < 4; i++) {
+      reinterpret_cast<char*>(&(addr.sin_addr))[i] = peers.at(peer_index*6 + i);
+      std::cout << (int)(unsigned char)(peers.at(peer_index*6 + i)) << " ";
+    }
+    std::cout << "PORT ";
+    for (int i = 4; i < 6; i++) {
+      reinterpret_cast<char*>(&(addr.sin_port))[i-4] = peers.at(peer_index*6 + i);
+      std::cout << (int)(unsigned char)(peers.at(peer_index*6 + i)) << " ";
+    }
+    std::cout << std::endl;
+
+    peer_index++;
+    return addr;
+  }
 };
 
 void NetworkerEntry(std::vector<Torrent> *torrents) {
@@ -91,16 +118,19 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 
     /* If we have under STOP_CONNECTING connections,
        then we should connect to a peer or several. */
-    if (connected.size() < STOP_CONNECTING) {
+    if (connected.size() < 1) {
       int new_sock = socket(AF_INET, SOCK_STREAM, 0);
-      fcntl(new_sock, F_SETFL, O_NONBLOCK);
-      std::pair<int, short> new_peer = torrents->at(0).yield_peer();
-      struct sockaddr_in addr = {AF_INET, htons(new_peer.second),
-          {htonl(new_peer.first)}, {0,0,0,0,0,0,0,0}};
-      int res = connect(new_sock, &addr, sizeof(addr));
-      if (res == 0) std::cout << "Connected to a new peer." << std::endl;
-      else std::cout << "Failed to connect to a new peer: "
-          << std::strerror(errno) << std::endl;
+      while (torrents->size() < 1);
+      sockaddr_in addr = torrents->at(0).yield_peer();
+      char checkbuf[300];
+      inet_ntop(AF_INET, &(addr.sin_addr), checkbuf, sizeof(checkbuf));
+      std::cout << "Connecting to " << checkbuf << ":" << ntohs(addr.sin_port) << "... ";
+      int res = connect(new_sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
+      if (res == 0) {
+        std::cout << "success!" << std::endl;
+        connected.push_back(Peer(new_sock, true));
+      }
+      else std::cout << "failed. (" << std::strerror(errno) << ")" << std::endl;
     }
 
     /* Check the listening socket for new connections */
@@ -121,16 +151,24 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
     if (select(max_fd, &readfds, &writefds, NULL, &timeout) > 0) {
       /* Accept a new connection from the listening socket */
       if (FD_ISSET(in_socket, &readfds)) {
-        connected.push_back(Peer(accept(in_socket, NULL, NULL)));
+        connected.push_back(Peer(accept(in_socket, NULL, NULL), false));
         std::cout << "A new peer has connected." << std::endl;
       }
 
       /* Check all the existing connections */
-      for (auto it = connected.cbegin(); it != connected.cend(); it++) {
+      for (auto it = connected.begin(); it != connected.end(); it++) {
         /* If I can recv from a peer */
         if (FD_ISSET(it->fd, &readfds)) {
-          char sockbuf[1024*1024];
+          char sockbuf[1024];
           int ayy = recv(it->fd, sockbuf, sizeof(sockbuf), MSG_DONTWAIT);
+          if (ayy == 0) {
+            /* Orderly shutdown */
+            close(it->fd);
+            it = connected.erase(it);
+            if (it != connected.begin()) it--;
+            std::cout << "Peer disconnected!" << std::endl;
+            continue;
+          }
           std::cout << "Received " << ayy << " bytes from a peer." << std::endl;
         }
 
@@ -138,8 +176,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
         if (FD_ISSET(it->fd, &writefds)) {
           /* write something */
           if (it->I_initiated && !it->have_sent_handshake) {
-
-            send(it->fd, )
+            std::cout << "Ooops I have to send a handshake!" << std::endl;
           }
         }
       }
@@ -159,7 +196,7 @@ size_t SaveResponseToVector(char *ptr, size_t size, size_t nmemb, void *userdata
   return size*nmemb;
 }
 
-void BeginTorrentDownload(std::string path_to_torrent_file) {
+Torrent BeginTorrentDownload(std::string path_to_torrent_file) {
   /* First, initialize curl */
   CURL *curl = curl_easy_init();
   if (!curl) throw std::logic_error("curl_easy_init() failed");
@@ -205,6 +242,8 @@ void BeginTorrentDownload(std::string path_to_torrent_file) {
       << escaped_peer_id
       << "&port=6881&event=started&uploaded=0&downloaded=0&left=" << torrent_size;
 
+  std::cout << url.str() << std::endl;
+
   /* Make the request and save the response */
   std::vector<char> tracker_response;
   curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str());
@@ -216,21 +255,20 @@ void BeginTorrentDownload(std::string path_to_torrent_file) {
 
   /* Decode the response */
   BencodeObj *resp_root = BencodeDecode(tracker_response);
-  /* For now assume it's in compact form */
-  std::string compact_peers = resp_root->get("peers")->get_string();
-
-
 
   curl_free(escaped_info_hash);
   curl_free(escaped_peer_id);
   curl_easy_cleanup(curl);
-  delete root; delete resp_root;
+
+  return Torrent(root, resp_root);
 }
 
 int main(int argc, char* argv[]) {
   if (argc != 2) return 0;
-  std::thread networker(NetworkerEntry);
-  BeginTorrentDownload(argv[1]);
+  std::vector<Torrent> torrents;
+  std::thread networker(NetworkerEntry, &torrents);
+  Torrent the_torrent = BeginTorrentDownload(argv[1]);
+  torrents.push_back(the_torrent);
   networker.join();
   return 0;
 }
