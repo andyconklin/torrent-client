@@ -37,51 +37,72 @@ std::vector<char> ReadFile(std::string path) {
 }
 
 struct Peer {
-  Peer(int fd, bool initiated) : fd(fd), received_from(std::time(NULL)), am_interested(false),
-      am_choked(true), is_interested(false), is_choked(true), I_initiated(initiated) { }
+  Peer(int fd, bool initiated) : fd(fd), received_from(std::time(NULL)),
+      sent_to(std::time(NULL)), am_interested(false),
+      am_choked(true), is_interested(false), is_choked(true) {
+    if (initiated) state = I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
+    else state = I_AM_EXPECTING_THE_FIRST_HANDSHAKE;
+  }
   void load_info_hash(unsigned char *x) {
     for (int i = 0; i < 20; i++) info_hash[i] = x[i];
   }
   void load_peer_id(unsigned char *x) {
     for (int i = 0; i < 20; i++) peer_id[i] = x[i];
   }
+  std::vector<char> handshake() {
+    std::vector<char> shake(68);
+    shake[0] = 19;
+    for (int i = 0; i < 19; i++) shake[1+i] = "BitTorrent protocol"[i];
+    for (int i = 0; i < 8; i++) shake[20+i] = 0;
+    for (int i = 0; i < 20; i++) shake[28+i] = info_hash[i];
+    for (int i = 0; i < 20; i++) shake[48+i] = 'a';
+    return shake;
+  }
   int fd;
   std::vector<bool> bitfield;
   std::time_t received_from;
   std::time_t sent_to;
-  unsigned char info_hash[20];
+  unsigned char info_hash[20]; /* Why don't we point to a torrent struct for these two values */
   unsigned char peer_id[20];
   bool am_interested;
   bool am_choked;
   bool is_interested;
   bool is_choked;
-  bool have_sent_handshake;
-  bool have_received_handshake;
-  bool I_initiated;
+  enum State {
+    I_AM_EXPECTING_THE_FIRST_HANDSHAKE,
+    I_NEED_TO_SEND_THE_FIRST_HANDSHAKE,
+    I_AM_EXPECTING_THE_SECOND_HANDSHAKE,
+    I_NEED_TO_SEND_THE_SECOND_HANDSHAKE,
+    I_SHOULD_SEND_BITFIELD
+  };
+  State state;
 };
 
 struct Torrent {
   BencodeObj *metainfo;
   BencodeObj *response;
   int peer_index;
-  Torrent(BencodeObj* metainfo, BencodeObj* response) : metainfo(metainfo), response(response), peer_index(0) { }
+  unsigned char info_hash[20];
+  unsigned char peer_id[20];
+  Torrent(BencodeObj* metainfo, BencodeObj* response, unsigned char *info,
+      unsigned char *peer) : metainfo(metainfo), response(response), peer_index(0) {
+    for (int i = 0; i < 20; i++) {
+      info_hash[i] = info[i];
+      peer_id[i] = peer[i];
+    }
+  }
   struct sockaddr_in yield_peer() {
     struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     for (int i = 0; i < 8; i++) addr.sin_zero[i] = 0;
 
     std::string peers = response->get("peers")->get_string();
-    std::cout << "HOST ";
     for (int i = 0; i < 4; i++) {
       reinterpret_cast<char*>(&(addr.sin_addr))[i] = peers.at(peer_index*6 + i);
-      std::cout << (int)(unsigned char)(peers.at(peer_index*6 + i)) << " ";
     }
-    std::cout << "PORT ";
     for (int i = 4; i < 6; i++) {
       reinterpret_cast<char*>(&(addr.sin_port))[i-4] = peers.at(peer_index*6 + i);
-      std::cout << (int)(unsigned char)(peers.at(peer_index*6 + i)) << " ";
     }
-    std::cout << std::endl;
 
     peer_index++;
     return addr;
@@ -90,7 +111,7 @@ struct Torrent {
 
 void NetworkerEntry(std::vector<Torrent> *torrents) {
   /* http://stackoverflow.com/questions/2284428 */
-  fd_set readfds, writefds;
+  fd_set readfds;
   struct timeval timeout;
   int max_fd = 0;
   std::vector<Peer> connected;
@@ -128,27 +149,27 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
       int res = connect(new_sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
       if (res == 0) {
         std::cout << "success!" << std::endl;
-        connected.push_back(Peer(new_sock, true));
+        Peer mynewpeer = Peer(new_sock, true);
+        mynewpeer.load_info_hash(torrents->at(0).info_hash);
+        connected.push_back(mynewpeer);
       }
       else std::cout << "failed. (" << std::strerror(errno) << ")" << std::endl;
     }
 
     /* Check the listening socket for new connections */
     FD_ZERO(&readfds);
-    FD_ZERO(&writefds);
     FD_SET(in_socket, &readfds);
     max_fd = (max_fd > in_socket) ? max_fd : in_socket + 1;
 
     /* Check the existing connections */
     for (auto it = connected.cbegin(); it != connected.cend(); it++) {
       FD_SET(it->fd, &readfds);
-      FD_SET(it->fd, &writefds);
       max_fd = (max_fd > it->fd) ? max_fd : it->fd + 1;
     }
 
-    /* Spend 2 seconds looking for changes in all the connections */
-    timeout.tv_sec = 2; timeout.tv_usec = 0;
-    if (select(max_fd, &readfds, &writefds, NULL, &timeout) > 0) {
+    /* Spend up to 1 second looking for bytes to read */
+    timeout.tv_sec = 1; timeout.tv_usec = 0;
+    if (select(max_fd, &readfds, NULL, NULL, &timeout) > 0) {
       /* Accept a new connection from the listening socket */
       if (FD_ISSET(in_socket, &readfds)) {
         connected.push_back(Peer(accept(in_socket, NULL, NULL), false));
@@ -159,10 +180,10 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
       for (auto it = connected.begin(); it != connected.end(); it++) {
         /* If I can recv from a peer */
         if (FD_ISSET(it->fd, &readfds)) {
-          char sockbuf[1024];
+          char sockbuf[1024*1024];
           int ayy = recv(it->fd, sockbuf, sizeof(sockbuf), MSG_DONTWAIT);
           if (ayy == 0) {
-            /* Orderly shutdown */
+            /* Peer disconnected... orderly shutdown */
             close(it->fd);
             it = connected.erase(it);
             if (it != connected.begin()) it--;
@@ -171,16 +192,27 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
           }
           std::cout << "Received " << ayy << " bytes from a peer." << std::endl;
         }
+      }
+    }
 
-        /* If I can send to a peer */
-        if (FD_ISSET(it->fd, &writefds)) {
-          /* write something */
-          if (it->I_initiated && !it->have_sent_handshake) {
-            std::cout << "Ooops I have to send a handshake!" << std::endl;
-          }
+    /* Check all connections a second time */
+    for (auto it = connected.begin(); it != connected.end(); it++) {
+      /* Should I send something? */
+      if (it->state == Peer::I_NEED_TO_SEND_THE_FIRST_HANDSHAKE ||
+          it->state == Peer::I_NEED_TO_SEND_THE_SECOND_HANDSHAKE) {
+        std::vector<char> shake = it->handshake();
+        int num_sent = send(it->fd, shake.data(), shake.size(), MSG_DONTWAIT);
+        if (num_sent == shake.size()) {
+          if (it->state == Peer::I_NEED_TO_SEND_THE_FIRST_HANDSHAKE)
+            it->state = Peer::I_AM_EXPECTING_THE_SECOND_HANDSHAKE;
+          else
+            it->state = Peer::I_SHOULD_SEND_BITFIELD;
+        } else if (num_sent == -1) {
+          std::cout << "Failed to send handshake. " << std::strerror(errno) << std::endl;
         }
       }
     }
+
   }
 }
 
@@ -260,7 +292,7 @@ Torrent BeginTorrentDownload(std::string path_to_torrent_file) {
   curl_free(escaped_peer_id);
   curl_easy_cleanup(curl);
 
-  return Torrent(root, resp_root);
+  return Torrent(root, resp_root, info_hash, peer_id);
 }
 
 int main(int argc, char* argv[]) {
