@@ -33,6 +33,7 @@ struct Torrent {
   Torrent(std::string path_to_torrent_file);
   struct sockaddr_in yield_peer();
   std::vector<char> handshake();
+  std::vector<char> bitfield();
 };
 
 #endif

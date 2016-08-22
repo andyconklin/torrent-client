@@ -88,6 +88,8 @@ BencodeObj *BencodeDecode(std::vector<char>::const_iterator const it_begin,
     if ((int_text[0] == '0' && int_text.size() > 1) ||
         (int_text[0] == '-' && (int_text.size() == 1 || int_text[1] == '0')))
       throw std::logic_error("Integer parsing: Leading zero");
+    /* TODO replace ints with long longs where appropriate
+       (program crashes on large files) */
     return new BencodeInt(std::stoi(int_text), std::make_pair(first_char, std::distance(it_begin, it)));
   } else if (*it == 'l') {
     std::vector<BencodeObj *> list;

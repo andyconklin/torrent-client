@@ -6,6 +6,8 @@
 
 #include "Torrent.h"
 
+#define TOINT(x) (ntohl(*reinterpret_cast<unsigned int *>(&x)))
+
 struct NeedTorrent {
   unsigned char info_hash[20];
   NeedTorrent(unsigned char *x) {

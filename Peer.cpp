@@ -13,7 +13,10 @@ Peer::Peer(Torrent *parent_torrent, int fd, bool initiated) :
 bool Peer::process_one_message() {
   if (inbuf.size() == 0) return false;
 
-  if (static_cast<unsigned int>(1 + inbuf[0]) > inbuf.size()) return false;
+  if (state != I_AM_EXPECTING_THE_FIRST_HANDSHAKE &&
+      state != I_AM_EXPECTING_THE_SECOND_HANDSHAKE &&
+      static_cast<unsigned int>(4 + TOINT(inbuf[0])) > inbuf.size())
+    return false;
 
   int num_read = 0;
 
@@ -43,40 +46,40 @@ bool Peer::process_one_message() {
       state = I_NEED_TO_SEND_THE_SECOND_HANDSHAKE;
     else
       state = I_SHOULD_SEND_BITFIELD;
-  } else if (inbuf[0] == 0) {
-    for (num_read = 0; inbuf[num_read] == 0; num_read++);
+  } else if (TOINT(inbuf[0]) == 0) {
+    num_read = 4;
   } else {
-    if (inbuf[0] == 1) {
-      if (inbuf[1] == 0) is_choked = true;
-      else if (inbuf[1] == 1) is_choked = false;
-      else if (inbuf[1] == 2) is_interested = true;
-      else if (inbuf[1] == 3) is_interested = false;
-      else throw std::logic_error("Unrecognized message.");
+    if (TOINT(inbuf[0]) == 1) {
+      if (inbuf[4] == 0) is_choked = true;
+      else if (inbuf[4] == 1) is_choked = false;
+      else if (inbuf[4] == 2) is_interested = true;
+      else if (inbuf[4] == 3) is_interested = false;
+      else throw std::logic_error("Unrecognized message. ABC");
       num_read = 2;
     } else {
-      if (inbuf[1] == 4) { /* HAVE */
-        if (inbuf[0] == 5) {
+      if (inbuf[4] == 4) { /* HAVE */
+        if (TOINT(inbuf[0]) == 5) {
           unsigned int index = ntohs(*(reinterpret_cast<unsigned int *>(&inbuf[2])));
           bitfield[index] = true;
-          num_read = 6;
+          num_read = 9;
         } else throw std::logic_error("Malformed HAVE message.");
-      } else if (inbuf[1] == 5) { /* BITFIELD */
-        int b = bitfield.size() / 8;
-        if (inbuf[0] == 1 + b) {
+      } else if (inbuf[4] == 5) { /* BITFIELD */
+        unsigned int b = bitfield.size() / 8;
+        if (TOINT(inbuf[0]) == 1 + b) {
           for (unsigned int i = 0; i < parent_torrent->pieces.size(); i++) {
-            int byte = i / 8;
-            int bit = 7 - (i % 8);
+            unsigned int byte = i / 8;
+            unsigned int bit = 7 - (i % 8);
             bitfield[i] = ((inbuf[2+byte] & (1 << bit)) != 0);
           }
-          num_read = 2 + b;
+          num_read = 5 + b;
         } else throw std::logic_error("Malformed BITFIELD message.");
-      } else if (inbuf[1] == 6) { /* REQUEST */
+      } else if (inbuf[4] == 6) { /* REQUEST */
         throw std::logic_error("REQUEST is not implemented.");
-      } else if (inbuf[1] == 7) { /* PIECE */
+      } else if (inbuf[4] == 7) { /* PIECE */
         throw std::logic_error("PIECE is not implemented.");
-      } else if (inbuf[1] == 8) { /* CANCEL */
+      } else if (inbuf[4] == 8) { /* CANCEL */
         throw std::logic_error("CANCEL is not implemented.");
-      } else throw std::logic_error("Unrecognized message.");
+      } else throw std::logic_error("Unrecognized message. DEF");
     }
   }
 
@@ -103,6 +106,12 @@ std::vector<unsigned char> Peer::to_send() {
       state = I_AM_EXPECTING_THE_SECOND_HANDSHAKE;
     else
       state = I_SHOULD_SEND_BITFIELD;
+  } else if (state == I_SHOULD_SEND_BITFIELD) {
+    std::vector<char> bits = parent_torrent->bitfield();
+    outbuf.insert(outbuf.end(), bits.begin(), bits.end());
+    state = INTRO_IS_FINISHED;
+  } else if (state == INTRO_IS_FINISHED) {
+
   }
   return outbuf;
 }

@@ -55,6 +55,17 @@ std::vector<char> Torrent::handshake() {
   return shake;
 }
 
+std::vector<char> Torrent::bitfield() {
+  int len = (pieces.size() + 7) / 8;
+  std::vector<char> ret(5+len, 0);
+  *reinterpret_cast<unsigned int *>(&ret[0]) = htonl(len+1);
+  ret[4] = 5;
+  for (unsigned int i = 0; i < pieces.size(); i++) {
+    if (pieces[i].I_have) ret[8+i/8] |= (1 << (7 - i));
+  }
+  return ret;
+}
+
 Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
   /* First, initialize curl */
   CURL *curl = curl_easy_init();
