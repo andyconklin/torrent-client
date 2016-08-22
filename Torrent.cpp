@@ -66,6 +66,10 @@ std::vector<char> Torrent::bitfield() {
   return ret;
 }
 
+unsigned int Torrent::yield_piece() {
+
+}
+
 Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
   /* First, initialize curl */
   CURL *curl = curl_easy_init();
@@ -120,8 +124,6 @@ Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
       << escaped_peer_id
       << "&port=6881&event=started&uploaded=0&downloaded=0&left=" << torrent_size;
 
-  std::cout << url.str() << std::endl;
-
   /* Make the request and save the response */
   std::vector<char> tracker_response;
   curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str());
@@ -138,8 +140,6 @@ Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
     if (response->get("failure reason"))
       throw std::logic_error(response->get("failure reason")->get_string());
   } catch (std::out_of_range &e) { }
-
-  response->print(std::cout);
 
   curl_free(escaped_info_hash);
   curl_free(escaped_peer_id);

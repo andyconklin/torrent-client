@@ -97,6 +97,18 @@ void Peer::process_response(char *buf, int buflen) {
   while (process_one_message());
 }
 
+bool Peer::update_interest() {
+  bool old_interest = am_interested;
+  am_interested = false;
+  for (int i = 0; i < bitfield.size(); i++) {
+    if (bitfield[i] == true && parent_torrent->pieces[i].I_have == false) {
+      am_interested = true;
+      break;
+    }
+  }
+  return old_interest != am_interested;
+}
+
 std::vector<unsigned char> Peer::to_send() {
   if (state == I_NEED_TO_SEND_THE_FIRST_HANDSHAKE ||
       state == I_NEED_TO_SEND_THE_SECOND_HANDSHAKE) {
@@ -111,7 +123,13 @@ std::vector<unsigned char> Peer::to_send() {
     outbuf.insert(outbuf.end(), bits.begin(), bits.end());
     state = INTRO_IS_FINISHED;
   } else if (state == INTRO_IS_FINISHED) {
-
+    /* Did interest state change? */
+    if (update_interest()) {
+      std::vector<char> interest_out(5, 0);
+      interest_out[3] = 1;
+      interest_out[4] = (am_interested) ? 2 : 3;
+      outbuf.insert(outbuf.end(), interest_out.begin(), interest_out.end());
+    }
   }
   return outbuf;
 }

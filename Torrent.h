@@ -34,6 +34,7 @@ struct Torrent {
   struct sockaddr_in yield_peer();
   std::vector<char> handshake();
   std::vector<char> bitfield();
+  unsigned int yield_piece();
 };
 
 #endif

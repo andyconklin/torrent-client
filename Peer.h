@@ -44,5 +44,6 @@ struct Peer {
   void process_response(char *buf, int buflen);
   std::vector<unsigned char> to_send();
   void just_sent(int bytes);
+  bool update_interest();
 };
 #endif
