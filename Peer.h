@@ -38,6 +38,7 @@ struct Peer {
   std::vector<unsigned char> outbuf;
   std::vector<bool> bitfield;
   State state;
+  int allowed_requests;
 
   Peer(struct Torrent *parent_torrent, int fd, bool initiated);
   bool process_one_message();

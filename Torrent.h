@@ -19,6 +19,7 @@ struct Torrent {
     bool I_have;
     unsigned char hash[20];
     std::vector<char> buffer;
+    std::vector<bool> have_chunk;
     Piece(unsigned char const *metahash, int piecelen);
   };
   BencodeObj *metainfo;
@@ -35,6 +36,7 @@ struct Torrent {
   std::vector<char> handshake();
   std::vector<char> bitfield();
   unsigned int yield_piece();
+  std::vector<char> yield_request(Peer *);
 };
 
 #endif

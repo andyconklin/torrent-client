@@ -103,7 +103,6 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
               std::cout << "(recv): An error occurred: " << std::strerror(errno) << std::endl;
             } else {
               std::cout << "Received " << resplen << " bytes from a peer." << std::endl;
-              std::cout << std::endl;
               peer->process_response(sockbuf, resplen);
             }
           }

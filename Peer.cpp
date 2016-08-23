@@ -4,7 +4,7 @@ Peer::Peer(Torrent *parent_torrent, int fd, bool initiated) :
     parent_torrent(parent_torrent), fd(fd),
     received_from(std::time(NULL)), sent_to(std::time(NULL)),
     am_interested(false), am_choked(true), is_interested(false),
-    is_choked(true) {
+    is_choked(true), allowed_requests(5) {
   if (initiated) state = I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
   else state = I_AM_EXPECTING_THE_FIRST_HANDSHAKE;
   for (int i = 0; i < 20; i++) peer_id[i] = 0;
@@ -55,7 +55,7 @@ bool Peer::process_one_message() {
       else if (inbuf[4] == 2) is_interested = true;
       else if (inbuf[4] == 3) is_interested = false;
       else throw std::logic_error("Unrecognized message. ABC");
-      num_read = 2;
+      num_read = 5;
     } else {
       if (inbuf[4] == 4) { /* HAVE */
         if (TOINT(inbuf[0]) == 5) {
@@ -76,13 +76,19 @@ bool Peer::process_one_message() {
       } else if (inbuf[4] == 6) { /* REQUEST */
         throw std::logic_error("REQUEST is not implemented.");
       } else if (inbuf[4] == 7) { /* PIECE */
-        throw std::logic_error("PIECE is not implemented.");
+        std::cout << "Writing piece of length " << TOINT(inbuf[0])-9 << std::endl;
+        memcpy(&(parent_torrent->pieces.at(TOINT(inbuf[5])).buffer[TOINT(inbuf[9])]),
+            &inbuf[13], TOINT(inbuf[0])-9);
+        parent_torrent->pieces.at(TOINT(inbuf[5])).have_chunk.at(TOINT(inbuf[9])/0x4000) = true;
+        allowed_requests++;
+        num_read = 4 + TOINT(inbuf[0]);
       } else if (inbuf[4] == 8) { /* CANCEL */
         throw std::logic_error("CANCEL is not implemented.");
-      } else throw std::logic_error("Unrecognized message. DEF");
+      } else {
+        throw std::logic_error("Unrecognized message. DEF");
+      }
     }
   }
-
   inbuf.erase(inbuf.begin(), inbuf.begin() + num_read);
   return true;
 }
@@ -129,6 +135,11 @@ std::vector<unsigned char> Peer::to_send() {
       interest_out[3] = 1;
       interest_out[4] = (am_interested) ? 2 : 3;
       outbuf.insert(outbuf.end(), interest_out.begin(), interest_out.end());
+    }
+    /* Should I request something? */
+    if (!is_choked && am_interested && outbuf.size() == 0) {
+      std::vector<char> ok = parent_torrent->yield_request(this);
+      outbuf.insert(outbuf.end(), ok.begin(), ok.end());
     }
   }
   return outbuf;

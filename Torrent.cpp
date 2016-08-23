@@ -24,7 +24,7 @@ namespace {
 }
 
 Torrent::Piece::Piece(unsigned char const *metahash, int piecelen) :
-    I_have(false), buffer(std::vector<char>(piecelen)) {
+    I_have(false), buffer(std::vector<char>(piecelen)), have_chunk(std::vector<bool>((piecelen+0x3fff)/0x4000)) {
   memcpy(hash, metahash, 20);
 }
 
@@ -66,8 +66,33 @@ std::vector<char> Torrent::bitfield() {
   return ret;
 }
 
-unsigned int Torrent::yield_piece() {
-
+std::vector<char> Torrent::yield_request(Peer *peer) {
+  std::vector<char> ret;
+  if (peer->allowed_requests <= 0) return ret;
+  unsigned int p = 0;
+  for (unsigned int i = 0; i < peer->bitfield.size(); i++) {
+    if (peer->bitfield[i] && !pieces[i].I_have) {
+      p = i;
+      break;
+    }
+  }
+  for (unsigned int i = 0; i < pieces.at(p).buffer.size(); i += 0x4000) {
+    if (pieces.at(p).have_chunk[i/0x4000]) continue;
+    std::vector<char> request_out(17, 0);
+    request_out[3] = 13;
+    request_out[4] = 6;
+    *reinterpret_cast<unsigned int *>(&request_out[5]) = htonl(p);
+    *reinterpret_cast<unsigned int *>(&request_out[9]) = htonl(i);
+    if (i + 0x4000 >= pieces.at(p).buffer.size())
+      *reinterpret_cast<unsigned int *>(&request_out[13]) =
+        htonl(pieces.at(p).buffer.size() - i);
+    else
+      *reinterpret_cast<unsigned int *>(&request_out[13]) = htonl(0x4000);
+    ret.insert(ret.end(), request_out.begin(), request_out.end());
+    peer->allowed_requests--;
+    if (peer->allowed_requests <= 0) break;
+  }
+  return ret;
 }
 
 Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
