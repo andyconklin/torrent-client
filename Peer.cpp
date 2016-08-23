@@ -61,7 +61,6 @@ bool Peer::process_one_message() {
         if (TOINT(inbuf[0]) == 5) {
           unsigned int index = TOINT(inbuf[5]);
           bitfield[index] = true;
-          std::cout << "HAVE: Peer has piece " << index << "." << std::endl;
           num_read = 9;
         } else throw std::logic_error("Malformed HAVE message.");
       } else if (inbuf[4] == 5) { /* BITFIELD */
@@ -71,13 +70,13 @@ bool Peer::process_one_message() {
             unsigned int byte = i / 8;
             unsigned int bit = 7 - (i % 8);
             bitfield[i] = ((inbuf[5+byte] & (1 << bit)) != 0);
-            if (bitfield[i]) std::cout << "BITFIELD: (" << (int)inbuf[5+byte] << ") Peer has piece " << i << "." << std::endl;
           }
           num_read = 5 + b;
         } else throw std::logic_error("Malformed BITFIELD message.");
       } else if (inbuf[4] == 6) { /* REQUEST */
         throw std::logic_error("REQUEST is not implemented.");
       } else if (inbuf[4] == 7) { /* PIECE */
+        std::cout << "I got a piece message." << std::endl;
         parent_torrent->place_piece(TOINT(inbuf[5]), TOINT(inbuf[9]),
             reinterpret_cast<char const *>(&inbuf[13]), TOINT(inbuf[0])-9);
         allowed_requests++;

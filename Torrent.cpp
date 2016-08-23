@@ -71,7 +71,7 @@ std::vector<char> Torrent::yield_request(Peer *peer) {
   std::vector<char> ret;
   if (peer->allowed_requests < 5) return ret;
   unsigned int p = 0;
-  for (unsigned int i = 0; i < peer->bitfield.size(); i++) {
+  for (unsigned int i = peer->bitfield.size() - 1; i >= 0; i--) {
     if (peer->bitfield[i] && !pieces[i].I_have) {
       p = i;
       break;
@@ -114,9 +114,9 @@ void Torrent::place_piece(unsigned int index, unsigned int begin,
     unsigned char found_hash[20];
     SHA1(reinterpret_cast<const unsigned char *>(p.buffer.data()),
         p.buffer.size(), found_hash);
-    if (true) { //memcmp(p.hash, found_hash, 20) == 0) {
+    if (memcmp(p.hash, found_hash, 20) == 0) {
+      std::cout << "Acquired piece " << index << "." << std::endl;
       p.I_have = true;
-      std::cout << "Acquired piece " << index << "!" << std::endl;
       for (unsigned int i = 0; i < pieces.size(); i++) {
         if (!pieces.at(i).I_have) {
           try_to_hash = false;
@@ -124,12 +124,13 @@ void Torrent::place_piece(unsigned int index, unsigned int begin,
         }
       }
       if (try_to_hash) {
-        std::cout << "I think I have all the pieces now." << std::endl;
+        /* Download is complete. */
+        std::cout << "Torrent has completed downloading." << std::endl;
+        std::ofstream outfile("the_torrent.bin", std::ofstream::binary);
         for (unsigned int i = 0; i < pieces.size(); i++) {
-          for (unsigned int j = 0; j < pieces.at(i).buffer.size(); j++) {
-            std::cout << *(unsigned char *)(&pieces.at(i).buffer.at(j));
-          }
+          outfile.write(pieces.at(i).buffer.data(), pieces.at(i).buffer.size());
         }
+        outfile.close();
       }
     } else {
       for (unsigned int i = 0; i < p.have_chunk.size(); i++) {
@@ -141,7 +142,7 @@ void Torrent::place_piece(unsigned int index, unsigned int begin,
   }
 }
 
-Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
+Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0) {
   /* First, initialize curl */
   CURL *curl = curl_easy_init();
   if (!curl) throw std::logic_error("curl_easy_init() failed");
@@ -152,17 +153,6 @@ Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
 
   /* Get the info dict */
   BencodeObj *info = metainfo->get("info");
-
-  /* Populate pieces */
-  int num_pieces = info->get("pieces")->get_string().size() / 20;
-  for (int i = 0; i < num_pieces; i++) {
-    int piece_size = info->get("piece length")->get_int();
-    if (i == num_pieces-1)
-      if ((torrent_size % piece_size) != 0)
-        piece_size = (torrent_size % piece_size);
-    pieces.push_back(Piece(reinterpret_cast<unsigned char const *>(
-        &(info->get("pieces")->get_string()[i*20])), piece_size));
-  }
 
   /* Calculate info_hash */
   SHA1(reinterpret_cast<const unsigned char *>(&the_file[info->bounds.first]),
@@ -180,6 +170,17 @@ Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
     for (auto &obj : list) {
       torrent_size += obj->get("length")->get_int();
     }
+  }
+
+  /* Populate pieces */
+  int num_pieces = info->get("pieces")->get_string().size() / 20;
+  for (int i = 0; i < num_pieces; i++) {
+    int piece_size = info->get("piece length")->get_int();
+    if (i == num_pieces-1)
+      if ((torrent_size % piece_size) != 0)
+        piece_size = (torrent_size % piece_size);
+    pieces.push_back(Piece(reinterpret_cast<unsigned char const *>(
+        &(info->get("pieces")->get_string()[i*20])), piece_size));
   }
 
   /* URL encode the binary data */
