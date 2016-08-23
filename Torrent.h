@@ -37,6 +37,7 @@ struct Torrent {
   std::vector<char> bitfield();
   unsigned int yield_piece();
   std::vector<char> yield_request(Peer *);
+  void place_piece(unsigned int index, unsigned int begin, char const *buf, unsigned int length);
 };
 
 #endif

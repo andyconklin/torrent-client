@@ -24,7 +24,8 @@ namespace {
 }
 
 Torrent::Piece::Piece(unsigned char const *metahash, int piecelen) :
-    I_have(false), buffer(std::vector<char>(piecelen)), have_chunk(std::vector<bool>((piecelen+0x3fff)/0x4000)) {
+    I_have(false), buffer(std::vector<char>(piecelen)),
+    have_chunk(std::vector<bool>((piecelen+0x3fff)/0x4000)) {
   memcpy(hash, metahash, 20);
 }
 
@@ -61,14 +62,14 @@ std::vector<char> Torrent::bitfield() {
   *reinterpret_cast<unsigned int *>(&ret[0]) = htonl(len+1);
   ret[4] = 5;
   for (unsigned int i = 0; i < pieces.size(); i++) {
-    if (pieces[i].I_have) ret[8+i/8] |= (1 << (7 - i));
+    if (pieces[i].I_have) ret[6+i/8] |= (1 << (7 - i));
   }
   return ret;
 }
 
 std::vector<char> Torrent::yield_request(Peer *peer) {
   std::vector<char> ret;
-  if (peer->allowed_requests <= 0) return ret;
+  if (peer->allowed_requests < 5) return ret;
   unsigned int p = 0;
   for (unsigned int i = 0; i < peer->bitfield.size(); i++) {
     if (peer->bitfield[i] && !pieces[i].I_have) {
@@ -93,6 +94,51 @@ std::vector<char> Torrent::yield_request(Peer *peer) {
     if (peer->allowed_requests <= 0) break;
   }
   return ret;
+}
+
+
+void Torrent::place_piece(unsigned int index, unsigned int begin,
+    char const *buf, unsigned int length) {
+  Piece &p = pieces.at(index);
+  p.have_chunk.at(begin/0x4000) = true;
+  /* TODO this is clearly not safe */
+  memcpy(&p.buffer[begin], buf, length);
+  bool try_to_hash = true;
+  for (unsigned int i = 0; i < p.have_chunk.size(); i++) {
+    if (!p.have_chunk.at(i)) {
+      try_to_hash = false;
+      break;
+    }
+  }
+  if (try_to_hash) {
+    unsigned char found_hash[20];
+    SHA1(reinterpret_cast<const unsigned char *>(p.buffer.data()),
+        p.buffer.size(), found_hash);
+    if (true) { //memcmp(p.hash, found_hash, 20) == 0) {
+      p.I_have = true;
+      std::cout << "Acquired piece " << index << "!" << std::endl;
+      for (unsigned int i = 0; i < pieces.size(); i++) {
+        if (!pieces.at(i).I_have) {
+          try_to_hash = false;
+          break;
+        }
+      }
+      if (try_to_hash) {
+        std::cout << "I think I have all the pieces now." << std::endl;
+        for (unsigned int i = 0; i < pieces.size(); i++) {
+          for (unsigned int j = 0; j < pieces.at(i).buffer.size(); j++) {
+            std::cout << *(unsigned char *)(&pieces.at(i).buffer.at(j));
+          }
+        }
+      }
+    } else {
+      for (unsigned int i = 0; i < p.have_chunk.size(); i++) {
+        p.I_have = false;
+        p.have_chunk.at(i) = false;
+        std::cout << "Piece " << index << " hashed wrong. Clearing." << std::endl;
+      }
+    }
+  }
 }
 
 Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
@@ -146,8 +192,8 @@ Torrent::Torrent(std::string path_to_torrent_file) : peer_index(0){
   std::ostringstream url;
   url << metainfo->get("announce")->get_string()
       << "?info_hash=" << escaped_info_hash << "&peer_id="
-      << escaped_peer_id
-      << "&port=6881&event=started&uploaded=0&downloaded=0&left=" << torrent_size;
+      << escaped_peer_id << "&port=6881&event=started&uploaded"
+      "=0&downloaded=0&left=" << torrent_size;
 
   /* Make the request and save the response */
   std::vector<char> tracker_response;

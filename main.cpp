@@ -89,7 +89,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 
       /* Check all the existing connections */
       for (Torrent &torrent : *torrents) {
-        for (auto peer = torrent.peers.begin(); peer != torrent.peers.end(); peer++) {
+        for (auto peer = torrent.peers.begin(); peer < torrent.peers.end(); peer++) {
           if (FD_ISSET(peer->fd, &readfds)) {
             char sockbuf[1024*1024];
             int resplen = recv(peer->fd, sockbuf, sizeof(sockbuf), MSG_DONTWAIT);
@@ -102,8 +102,15 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
             } else if (resplen < 0) {
               std::cout << "(recv): An error occurred: " << std::strerror(errno) << std::endl;
             } else {
-              std::cout << "Received " << resplen << " bytes from a peer." << std::endl;
-              peer->process_response(sockbuf, resplen);
+              try {
+                peer->process_response(sockbuf, resplen);
+              } catch (std::logic_error &e) {
+                std::cout << "Caught error: " << e.what() << std::endl;
+                std::cout << "Disconnecting..." << std::endl;
+                close(peer->fd);
+                peer = torrent.peers.erase(peer);
+                if (peer != torrent.peers.begin()) peer--;
+              }
             }
           }
         }
