@@ -23,9 +23,13 @@
 #define STOP_CONNECTING 30
 #define STOP_ACCEPTING 55
 
+Torrent *neediest(std::vector<Torrent> *torrents) {
+  return &torrents->at(0);
+}
+
 void NetworkerEntry(std::vector<Torrent> *torrents) {
   /* http://stackoverflow.com/questions/2284428 */
-  fd_set readfds;
+  fd_set readfds, writefds;
   struct timeval timeout;
   int max_fd = 0;
 
@@ -44,45 +48,55 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 
     while (torrents->size() < 1);
 
-    /* Cull the peers who have timed out. */
-    for (auto &torrent : *torrents) {
-      // torrent.cull();
-      torrent.peers.size();
+    int connected = 0;
+
+    for (auto x : *torrents) {
+      x.update();
+      connected += x.peers.size();
     }
+
+    std::cout << connected << " connected peers." << std::endl;
 
     /* If we have under STOP_CONNECTING connections,
        then we should connect to a peer or several. */
-    if (torrents->at(0).peers.size() < 1) {
+    if (connected < STOP_CONNECTING) {
       int new_sock = socket(AF_INET, SOCK_STREAM, 0);
-      sockaddr_in addr = torrents->at(0).yield_peer();
-      char checkbuf[300];
-      inet_ntop(AF_INET, &(addr.sin_addr), checkbuf, sizeof(checkbuf));
-      std::cout << "Connecting to " << checkbuf << ":" << ntohs(addr.sin_port) << "... ";
-      std::cout << std::flush;
+      int flags = fcntl(new_sock, F_GETFL);
+      fcntl(new_sock, F_SETFL, flags | O_NONBLOCK);
+      Torrent *needy = neediest(torrents);
+      sockaddr_in addr = needy->yield_peer();
+      std::cout << "Making a new connection..." << std::endl << std::flush;
       int res = connect(new_sock, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
-      if (res == 0) {
-        std::cout << "success!" << std::endl << std::flush;
-        Peer mynewpeer = Peer(&(torrents->at(0)), new_sock, true);
-        torrents->at(0).peers.push_back(mynewpeer);
+      if (res != 0 && res != EINPROGRESS) {
+        std::cout << "What??" << std::strerror(errno) << std::endl;
+      } else {
+        Peer mynewpeer = Peer(needy, new_sock, true);
+        if (res == 0) mynewpeer.state = Peer::I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
+        needy->peers.push_back(mynewpeer);
       }
-      else std::cout << "failed. (" << std::strerror(errno) << ")" << std::endl << std::flush;
     }
 
     /* Check the listening socket for new connections */
     FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
     FD_SET(in_socket, &readfds);
     max_fd = (max_fd > in_socket) ? max_fd : in_socket + 1;
 
     /* Check the existing connections */
-    for (auto it = torrents->at(0).peers.cbegin(); it != torrents->at(0).peers.cend(); it++) {
-      FD_SET(it->fd, &readfds);
-      max_fd = (max_fd > it->fd) ? max_fd : it->fd + 1;
+    for (Torrent &torrent : *torrents) {
+      for (auto it = torrent.peers.begin(); it != torrent.peers.end(); it++) {
+        if (it->state != Peer::NOT_EVEN_CONNECTED)
+          FD_SET(it->fd, &readfds);
+        if (it->to_send().size() > 0)
+          FD_SET(it->fd, &writefds);
+        max_fd = (max_fd > it->fd) ? max_fd : it->fd + 1;
+      }
     }
 
     /* Spend up to 1 second looking for bytes to read */
     timeout.tv_sec = 1; timeout.tv_usec = 0;
-    if (select(max_fd, &readfds, NULL, NULL, &timeout) > 0) {
-      /* Accept a new connection from the listening so  cket */
+    if (select(max_fd, &readfds, &writefds, NULL, &timeout) > 0) {
+      /* Accept a new connection from the listening socket */
       if (FD_ISSET(in_socket, &readfds)) {
         std::cout << "Not ready to have people connect to me actually." << std::endl;
       }
@@ -99,6 +113,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
               close(peer->fd);
               peer = torrent.peers.erase(peer);
               if (peer != torrent.peers.begin()) peer--;
+              continue;
             } else if (resplen < 0) {
               std::cout << "(recv): An error occurred: " << std::strerror(errno) << std::endl;
             } else {
@@ -110,31 +125,46 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
                 close(peer->fd);
                 peer = torrent.peers.erase(peer);
                 if (peer != torrent.peers.begin()) peer--;
+                continue;
               }
+            }
+          }
+
+          if (FD_ISSET(peer->fd, &writefds)) {
+            if (peer->state == Peer::NOT_EVEN_CONNECTED) {
+              /* Oh, good. Our connection completed. */
+              int res = 0;
+              socklen_t reslen = sizeof(res);
+              if (getsockopt(peer->fd, SOL_SOCKET, SO_ERROR, &res, &reslen) < 0 ||
+                  res != 0) {
+                std::cout << "Ah shoot it didn't work." << std::endl;
+                close(peer->fd);
+                peer = torrent.peers.erase(peer);
+                if (peer != torrent.peers.begin()) peer--;
+              } else {
+                peer->state = Peer::I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
+              }
+              continue;
+            }
+
+            /* Should I send something to this peer? */
+            std::vector<unsigned char> to_send = peer->to_send();
+            if (to_send.size() <= 0) {
+              std::cout << "I shouldn't even be here." << std::endl;
+              continue;
+            }
+
+            /* Send whatever */
+            int num_sent = send(peer->fd, to_send.data(), to_send.size(), MSG_DONTWAIT);
+            if (num_sent <= 0) {
+              std::cout << "Failed to send whatever. " << std::strerror(errno) << std::endl;
+            } else {
+              peer->just_sent(num_sent);
             }
           }
         }
       }
-
     }
-
-    /* Check all connections a second time */
-    for (Torrent &torrent : *torrents) {
-      for (auto peer = torrent.peers.begin(); peer != torrent.peers.end(); peer++) {
-        /* Should I send something to this peer? */
-        std::vector<unsigned char> to_send = peer->to_send();
-        if (to_send.size() == 0) continue;
-
-        /* Send whatever */
-        int num_sent = send(peer->fd, to_send.data(), to_send.size(), MSG_DONTWAIT);
-        if (num_sent <= 0) {
-          std::cout << "Failed to send whatever. " << std::strerror(errno) << std::endl;
-        } else {
-          peer->just_sent(num_sent);
-        }
-      }
-    }
-
   }
 }
 

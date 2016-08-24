@@ -5,7 +5,7 @@ Peer::Peer(Torrent *parent_torrent, int fd, bool initiated) :
     received_from(std::time(NULL)), sent_to(std::time(NULL)),
     am_interested(false), am_choked(true), is_interested(false),
     is_choked(true), allowed_requests(5) {
-  if (initiated) state = I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
+  if (initiated) state = NOT_EVEN_CONNECTED;
   else state = I_AM_EXPECTING_THE_FIRST_HANDSHAKE;
   for (int i = 0; i < 20; i++) peer_id[i] = 0;
 }

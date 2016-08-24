@@ -29,6 +29,10 @@ Torrent::Piece::Piece(unsigned char const *metahash, int piecelen) :
   memcpy(hash, metahash, 20);
 }
 
+void Torrent::update() {
+  return;
+}
+
 struct sockaddr_in Torrent::yield_peer() {
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
