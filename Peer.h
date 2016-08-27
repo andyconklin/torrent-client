@@ -26,7 +26,7 @@ struct Peer {
 		INTRO_IS_FINISHED
 	};
 
-	struct Torrent *parent_torrent;
+	struct Torrent *torrent;
 	int fd;
 	std::time_t received_from;
 	std::time_t sent_to;
@@ -39,9 +39,10 @@ struct Peer {
 	std::vector<unsigned char> outbuf;
 	std::vector<bool> bitfield;
 	State state;
-	int allowed_requests;
+	std::time_t last_request;
+	int allow_requests;
 
-	Peer(struct Torrent *parent_torrent, int fd, bool initiated);
+	Peer(struct Torrent *torrent, int fd, bool initiated);
 	bool process_one_message();
 	void process_response(char *buf, int buflen);
 	std::vector<unsigned char> to_send();

@@ -46,16 +46,8 @@ namespace {
 
 Torrent::Piece::Piece(unsigned char const *metahash, int piecelen) :
 	I_have(false), buffer(std::vector<char>(piecelen)),
-	sliver_status((piecelen + 0x3fff) / 0x4000) {
+	sliver_status((piecelen + 0x3fff) / 0x4000, 0), piece_size(piecelen) {
 	memcpy(hash, metahash, 20);
-}
-
-void Torrent::update() {
-	/* Temporary piece selection strategy: Reverse order. */
-	/* I have a pool of pieces...
-		The ones which I don't have but others do have are the ones I need to request 
-		*/
-	return;
 }
 
 struct sockaddr_in Torrent::yield_peer() {
@@ -91,50 +83,52 @@ std::vector<char> Torrent::bitfield() {
 	*reinterpret_cast<unsigned int *>(&ret[0]) = htonl(len + 1);
 	ret[4] = 5;
 	for (unsigned int i = 0; i < pieces.size(); i++) {
-		if (pieces[i].I_have) ret[6 + i / 8] |= (1 << (7 - i));
+		if (pieces[i].I_have) ret[5 + i / 8] |= (1 << (7 - i));
 	}
 	return ret;
 }
 
-std::vector<char> Torrent::yield_request(Peer *peer) {
+std::vector<char> Torrent::gimme_five_slivers() {
 	std::vector<char> ret;
-	if (peer->allowed_requests < 5) return ret;
-	unsigned int p = 0;
-	for (unsigned int i = peer->bitfield.size() - 1; i >= 0; i--) {
-		if (peer->bitfield[i] && !pieces[i].I_have) {
-			p = i;
-			break;
+	for (int i = 0; i < 5; i++) {
+		for (int j = pieces.size() - 1; j >= 0; j--) {
+			if (pieces.at(j).I_have) continue;
+			for (int k = 0; k < pieces.at(j).sliver_status.size(); k++) {
+				std::time_t &t = pieces.at(j).sliver_status.at(k);
+				if (t == 1) continue;
+				if (difftime(std::time(NULL), t) < 15) continue;
+				int end = 0x4000 * k + 0x4000;
+				if (end >= pieces.at(j).buffer.size())
+					end = pieces.at(j).buffer.size();
+
+				pieces.at(j).sliver_status.at(k) = std::time(NULL);
+
+				std::vector<char> request_out(17, 0);
+				request_out[3] = 13;
+				request_out[4] = 6;
+				*reinterpret_cast<unsigned int *>(&request_out[5]) = htonl(j);
+				*reinterpret_cast<unsigned int *>(&request_out[9]) = htonl(0x4000*k);
+				*reinterpret_cast<unsigned int *>(&request_out[13]) = htonl(end - (0x4000 * k));
+
+				ret.insert(ret.end(), request_out.begin(), request_out.end());
+				goto the_next_sliver;
+			}
 		}
-	}
-	for (unsigned int i = 0; i < pieces.at(p).buffer.size(); i += 0x4000) {
-		if (pieces.at(p).sliver_status[i / 0x4000]) continue;
-		std::vector<char> request_out(17, 0);
-		request_out[3] = 13;
-		request_out[4] = 6;
-		*reinterpret_cast<unsigned int *>(&request_out[5]) = htonl(p);
-		*reinterpret_cast<unsigned int *>(&request_out[9]) = htonl(i);
-		if (i + 0x4000 >= pieces.at(p).buffer.size())
-			*reinterpret_cast<unsigned int *>(&request_out[13]) =
-			htonl(pieces.at(p).buffer.size() - i);
-		else
-			*reinterpret_cast<unsigned int *>(&request_out[13]) = htonl(0x4000);
-		ret.insert(ret.end(), request_out.begin(), request_out.end());
-		peer->allowed_requests--;
-		if (peer->allowed_requests <= 0) break;
+	the_next_sliver:
+		continue;
 	}
 	return ret;
 }
-
 
 void Torrent::place_piece(unsigned int index, unsigned int begin,
 	char const *buf, unsigned int length) {
 	Piece &p = pieces.at(index);
-	p.sliver_status.at(begin / 0x4000) = true;
+	p.sliver_status.at(begin / 0x4000) = 1;
 	/* TODO this is clearly not safe */
 	memcpy(&p.buffer[begin], buf, length);
 	bool try_to_hash = true;
 	for (unsigned int i = 0; i < p.sliver_status.size(); i++) {
-		if (!p.sliver_status.at(i)) {
+		if (p.sliver_status.at(i) != 1) {
 			try_to_hash = false;
 			break;
 		}
@@ -165,7 +159,7 @@ void Torrent::place_piece(unsigned int index, unsigned int begin,
 		else {
 			for (unsigned int i = 0; i < p.sliver_status.size(); i++) {
 				p.I_have = false;
-				p.sliver_status.at(i) = false;
+				p.sliver_status.at(i) = 0;
 				std::cout << "Piece " << index << " hashed wrong. Clearing." << std::endl;
 			}
 		}

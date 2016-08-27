@@ -50,7 +50,6 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 		int connected = 0;
 
 		for (auto &x : *torrents) {
-			x.update();
 			connected += x.peers.size();
 		}
 
@@ -74,7 +73,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 			}
 			else {
 				Peer mynewpeer = Peer(needy, new_sock, true);
-				if (res == 0)
+				if (res == 0) /* connected immediately, surprisingly */
 					mynewpeer.state = Peer::I_NEED_TO_SEND_THE_FIRST_HANDSHAKE;
 				needy->peers.push_back(mynewpeer);
 			}
@@ -114,6 +113,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 			/* Check all the existing connections */
 			for (Torrent &torrent : *torrents) {
 				for (auto peer = torrent.peers.begin(); peer < torrent.peers.end(); peer++) {
+					/*************** READING ***************/
 					if (FD_ISSET(peer->fd, &readfds)) {
 						char sockbuf[4096];
 						int resplen = recv(peer->fd, sockbuf, sizeof(sockbuf), 0);
@@ -143,6 +143,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 						}
 					}
 
+					/*************** WRITING ***************/
 					if (FD_ISSET(peer->fd, &writefds)) {
 						if (peer->state == Peer::NOT_EVEN_CONNECTED) {
 							/* Oh, good. Our connection completed. */
@@ -170,6 +171,7 @@ void NetworkerEntry(std::vector<Torrent> *torrents) {
 						}
 					}
 
+					/*************** MISSED CONNECTIONS ***************/
 					if (FD_ISSET(peer->fd, &exceptfds)) {
 						closesocket(peer->fd);
 						peer = torrent.peers.erase(peer);
